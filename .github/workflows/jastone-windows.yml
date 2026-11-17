@@ -1,0 +1,71 @@
+name: JastOne Windows x64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/jastone-windows.yml'
+      - 'JastVPN-v5.9.8-Windows-x64-GitHub-Source.zip'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jastone-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_DIR: JastVPN-v5.9.8-Windows-x64
+  SOURCE_ZIP: JastVPN-v5.9.8-Windows-x64-GitHub-Source.zip
+
+jobs:
+  portable:
+    name: Build and test the Windows app
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Extract source ZIP
+        shell: pwsh
+        run: |
+          if (!(Test-Path -LiteralPath $env:SOURCE_ZIP -PathType Leaf)) {
+            throw "Source ZIP is missing from the repository root: $env:SOURCE_ZIP"
+          }
+          Expand-Archive -LiteralPath $env:SOURCE_ZIP -DestinationPath .
+          $script = Join-Path $env:PROJECT_DIR 'windows/scripts/build_jastone_portable.ps1'
+          if (!(Test-Path -LiteralPath $script -PathType Leaf)) {
+            throw "Expected Windows build script was not found in the source ZIP: $script"
+          }
+
+      - uses: subosito/flutter-action@fd55f4c5af5b953cc57a2be44cb082c8f6635e8e # v2.21.0
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+
+      - name: Prepare Inno Setup
+        shell: pwsh
+        run: |
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (!(Test-Path -LiteralPath $compiler) -and !(Get-Command ISCC.exe -ErrorAction SilentlyContinue)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Analyze, test, build and launch JastOne
+        shell: pwsh
+        working-directory: JastVPN-v5.9.8-Windows-x64
+        run: ./windows/scripts/build_jastone_portable.ps1 -SmokeTest -SetupExe
+
+      - name: Upload the Windows installer
+        uses: actions/upload-artifact@v6
+        with:
+          name: JastOne-Windows-Setup-x64
+          path: JastVPN-v5.9.8-Windows-x64/out/JastOne-Windows-Setup-x64.exe
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
